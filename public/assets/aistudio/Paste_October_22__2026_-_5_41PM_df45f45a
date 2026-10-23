@@ -1,0 +1,900 @@
+1. Mục tiêu, hiện trạng và phạm vi
+
+Xây dựng một hệ thống thống nhất để khách mua bánh, nước và quà lưu niệm; thu ngân nhận đơn và thu tiền; pha chế/bếp nhận phiếu chế biến; kho theo dõi nguyên liệu/thành phẩm; quản lý kiểm soát doanh thu, thành viên và hoạt động từng chi nhánh.
+
+Website hiện có giao diện React/TypeScript, giỏ hàng, chọn chi nhánh, dữ liệu sản phẩm và tương tác demo. Giỏ, điểm và lịch sử demo lưu trên trình duyệt. Đã có backend Express phục vụ chatbot; chưa có backend nghiệp vụ đơn hàng/kho/thành viên, xác thực nhân viên, xử lý thanh toán thật hoặc đồng bộ đơn giữa các thiết bị.
+
+Tài liệu này mở rộng từ bản demo thành sản phẩm có dữ liệu tập trung. Dữ liệu và trạng thái lưu trong trình duyệt của demo không được sử dụng làm dữ liệu vận hành chính thức.
+
+### 1.1. Giả định phạm vi
+
+- Một thương hiệu có nhiều chi nhánh; dùng sáu chi nhánh đang có trong demo làm dữ liệu mẫu.
+- Có thể có kho trung tâm, kho chi nhánh và khu hàng đang chuyển.
+- Đơn phát sinh từ website hoặc thu ngân tại quầy; cùng dùng một mô hình đơn hàng.
+- Mỗi đơn thuộc một chi nhánh phục vụ. Một giỏ không chia giao từ nhiều chi nhánh trong phiên bản đầu.
+- Phục vụ tại bàn, mang đi, nhận tại tiệm và giao hàng trong vùng cấu hình.
+- Nhân viên dùng trình duyệt trên máy tính hoặc tablet. Bản đầu cần kết nối mạng để ghi nhận giao dịch.
+
+Bản đầu dùng tiếng Việt, giữ nhận diện Summer Cake hiện có và thí điểm một chi nhánh trước khi mở rộng. Các module quản trị trong spec là yêu cầu phát triển, không phải cam kết rằng demo đã có đủ tính năng.
+
+<a id="spec-02"></a>
+
+## 2. Thuật ngữ và nguyên tắc chung
+
+| Thuật ngữ | Ý nghĩa |
+| --- | --- |
+| Cost / giá vốn mỗi ly | Chi phí nguyên liệu, thành phẩm và vật tư tiêu hao; khác giá bán và khác COD |
+| COD | Thu tiền khi giao hàng |
+| Bill / hóa đơn | Bill/chứng từ bán hàng nội bộ; tích hợp hóa đơn điện tử có liên kết riêng nếu được chọn |
+| Đơn hàng | Yêu cầu mua và quá trình phục vụ của khách |
+| Phiếu trạm | Phần công việc pha chế/bếp/lấy hàng thuộc đơn |
+| Phiếu giao | Hồ sơ điều phối và từng lần giao của đơn ship |
+| Tồn khả dụng | Tồn được phép dùng sau khi trừ phần giữ; không gồm hàng hết hạn/cách ly/đang chuyển |
+| Snapshot | Bản chụp dữ liệu tại thời điểm phát sinh để giữ lịch sử giá, công thức và chính sách |
+
+- Đơn, tiền, bill/in, chế biến và giao hàng có trạng thái riêng; không lấy trạng thái một nhóm để tự xác nhận nhóm khác.
+- Giá và quyền do server quyết định; dữ liệu trình duyệt chỉ hỗ trợ trải nghiệm.
+- Một sự kiện/yêu cầu lặp không được tạo trùng đơn, giao dịch, xuất kho, lượt ưu đãi hay điểm.
+- Quy tắc mới về in bill, quyền tài khoản, cost/vật tư, phiếu giao và tách module được áp dụng xuyên suốt tài liệu này.
+
+<a id="spec-03"></a>
+
+## 3. Vai trò, phân quyền theo tài khoản và nhiệm vụ
+
+### 3.1. Nguyên tắc phân quyền
+
+- Mỗi tài khoản chỉ vào module được cấp và chỉ xem dữ liệu thuộc mình hoặc nhiệm vụ/kho/trạm đã phân công.
+- Không dùng một quyền “nhân viên” chung để mở mọi màn hình. Không tự cộng quyền của nhiều vai trò để mở rộng phạm vi; cấp thêm quyền phải là hành động quản trị có audit.
+- “Của mình” đối với đơn/ca là người lập/người được giao hợp lệ; đối với kho/trạm là kho/trạm được phân công. Tồn kho và hàng chờ trạm là dữ liệu dùng chung trong phạm vi nhiệm vụ, không chỉ là các phiếu do mình tạo.
+- Quản lý/chủ cũng chỉ xem phạm vi và quyền giám sát được cấp; không mặc định mọi tài khoản quản lý đều được xem toàn bộ chi nhánh.
+- Kiểm tra trên API, báo cáo, file xuất, tìm kiếm và kênh thời gian thực. Đổi ID trên URL không được vượt phạm vi.
+
+### 3.2. Ma trận quyền mặc định
+
+| Tài khoản | Module được vào | Dữ liệu được xem | Không được xem/thao tác mặc định |
+| --- | --- | --- | --- |
+| Khách hàng | Menu, ưu đãi, ví voucher, tài khoản, đơn, theo dõi giao | Hồ sơ/điểm/voucher/đơn và phiếu giao của mình | Kho, cost, bill/khách khác, màn hình nhân viên |
+| Thủ kho | Kho, cảnh báo, phiếu nhập/xuất, kiểm kê/chuyển kho theo quyền | Mã hàng, lô, tồn và chứng từ tại kho được phân công; giá nhập nếu được cấp quyền chi phí kho | POS, doanh thu/ca tiền, hóa đơn bán, hồ sơ thành viên, sửa giá bán, tạo ưu đãi/voucher |
+| Pha chế/bếp | Bảng trạm và thông báo tác nghiệp | Phiếu/món tại trạm được phân công, ghi chú cần thiết | Tổng doanh thu, giá vốn/lãi, tiền mặt, hồ sơ khách, sửa menu/giá, kho tổng |
+| Thu ngân | POS, đơn được giao, hóa đơn của mình, ca của mình, áp ưu đãi/voucher | Đơn/bill/ca của mình; thông tin thành viên tối thiểu phục vụ đơn | Kho/giá nhập/cost/lãi, ca/bill người khác, chỉnh giá danh mục, tạo chiến dịch/mã, sửa điểm trực tiếp |
+| Điều phối giao hàng | CRM phiếu giao | Phiếu giao được giao cho mình và thông tin cần giao/liên hệ | Kho, cost, lợi nhuận, hồ sơ khách ngoài phiếu, ca tiền mặt thu ngân |
+| Quản lý/chủ | Các module được cấp rõ ràng | Phạm vi chi nhánh/kho/tài khoản có quyền giám sát | Dữ liệu ngoài phạm vi, tự duyệt yêu cầu bị quy tắc hai người cấm |
+
+Thu ngân có thể cập nhật phần bàn giao phiếu giao thuộc đơn mình theo quyền `delivery.handover`; không vì thế được xem tất cả phiếu CRM. Điều phối không được tự đánh dấu cửa hàng đã nhận tiền COD nếu chưa có quyền đối soát tiền.
+
+### 3.3. Các quyền cần tách riêng
+
+- Xem/sửa/phát hành menu; xem/sửa giá bán; xem cost/lãi.
+- Xem kho; nhập/xuất; xem chi phí nhập; sửa định mức; điều chỉnh/duyệt tồn.
+- Tạo/áp ưu đãi; tạo/áp voucher; giảm giá tay; duyệt ngoại lệ.
+- Xem bill của mình; xem bill người khác; in lại; đề nghị/duyệt hoàn.
+- Xem/giao phiếu ship; bàn giao; cập nhật giao; đối soát COD.
+- Xem thành viên tối thiểu; xem hồ sơ đầy đủ; đề nghị/duyệt chỉnh điểm.
+- Xem/đóng ca của mình; giám sát ca khác; xuất báo cáo.
+
+Không dùng chung tài khoản thu ngân. Khách chưa đăng nhập được xem menu/đặt đơn với thông tin liên hệ nhưng không dùng quyền lợi thành viên khi chưa xác minh. Mọi cấp thêm/thu hồi quyền có người thực hiện, thời gian và lý do.
+
+<a id="spec-04"></a>
+
+## 4. Cấu trúc website và menu vận hành
+
+### 4.1. Khu khách hàng
+
+1. Trang chủ: thương hiệu, món nổi bật, combo, ưu đãi và chi nhánh.
+2. Thực đơn: bánh, nước, bánh hũ/sinh nhật, combo/party box; tìm kiếm và lọc.
+3. Quà lưu niệm: nam châm, pin cài, sticker, ly, hộp quà; lọc loại/chủ đề.
+4. Chi tiết sản phẩm: biến thể, giá/phụ thu, thành phần, tùy chọn và khả năng bán.
+5. Ưu đãi: chương trình và điều kiện áp dụng.
+6. Tài khoản/Summer Club: hồ sơ, điểm, hạng, địa chỉ, quà và Ví voucher.
+7. Giỏ hàng/thanh toán: nhận hàng, Ưu đãi của đơn hàng, phương thức và tổng tiền.
+8. Đơn hàng của tôi: lịch sử, chi tiết, bill và Theo dõi giao hàng cho đơn ship.
+9. Chi nhánh và Về Summer Cafe.
+
+### 4.2. Khu nhân viên/quản trị
+
+| Module | Đường dẫn đề xuất | Chức năng |
+| --- | --- | --- |
+| POS / Đơn hàng | /staff/pos, /staff/orders | Tạo, nhận và xử lý đơn trong phạm vi được giao |
+| Pha chế/bếp | /staff/preparation | Phiếu trạm, tiến độ, sự cố |
+| Hóa đơn | /staff/invoices | Bill của tài khoản trong ca, in/in lại và lịch sử |
+| CRM giao hàng / Phiếu giao | /staff/deliveries | Đơn ship, phân công, theo dõi, giao lại và COD |
+| Kho | /staff/inventory | Nhập/xuất/tồn, lô, cảnh báo, kiểm kê/chuyển kho |
+| Thành viên | /staff/members | Tra cứu/đổi quà/đề nghị điều chỉnh theo quyền |
+| Menu & giá bán | /admin/menu | Món, biến thể và giá theo phạm vi/thời gian |
+| Định mức & Cost sản phẩm | /admin/costs | Công thức, vật tư và giá vốn theo quyền |
+| Ưu đãi | /admin/promotions | Chương trình ưu đãi độc lập |
+| Voucher | /admin/vouchers | Mã, phát hành, ví và lượt sử dụng |
+| Báo cáo | /admin/reports | Kết quả kinh doanh và vận hành theo quyền |
+| Hệ thống | /admin/settings | Tài khoản/quyền, chi nhánh, thiết bị, tích hợp, cấu hình kỹ thuật |
+
+Đây là danh sách tối đa, không phải menu chung của mọi tài khoản. Tài khoản chỉ thấy các module được cấp. Ưu đãi và Voucher là hai module độc lập, không đặt bên trong Hệ thống. Các đường dẫn là cấu trúc đề xuất cho phát triển.
+
+<a id="spec-05"></a>
+
+## 5. Sản phẩm, biến thể, combo và khả năng bán
+
+### 5.1. Dữ liệu sản phẩm
+
+Mỗi sản phẩm có mã nội bộ, tên, nhóm, mô tả, ảnh, đơn vị bán, trạng thái hoạt động, giá, nơi áp dụng, trạm xử lý và thời gian chuẩn bị dự kiến. Sản phẩm có thể được bán ở một số chi nhánh hoặc trong khung giờ nhất định.
+
+| Nhóm | Đặc điểm cần hỗ trợ |
+| --- | --- |
+| Bánh có sẵn | Theo dõi thành phẩm theo chiếc/hộp, lô, ngày sản xuất, hạn dùng; có tùy chọn làm nóng |
+| Nước pha chế | Size, mức đường/đá, nóng/lạnh, topping; công thức và lượng nguyên liệu theo biến thể |
+| Bánh đặt trước | Kích thước, vị, nội dung viết, giờ nhận; giới hạn số đơn và thời gian đặt trước |
+| Quà lưu niệm | SKU theo mẫu/màu/dung tích, giá, số lượng tồn, mã vạch nếu có |
+| Combo/hộp quà | Danh sách món thành phần, số lượng và lựa chọn thay thế được phép |
+
+- Tùy chọn có thể bắt buộc, chọn một/chọn nhiều, có phụ thu, có giới hạn số lượng.
+- Chỉ cho chọn các tổ hợp thực sự được hỗ trợ. Ghi chú tự do không thay thế tùy chọn ảnh hưởng giá/công thức.
+- Có thông tin dị ứng/thành phần khi cửa hàng cung cấp; nhân viên thấy ghi chú liên quan trên phiếu.
+- Quản lý có thể tạm hết món theo chi nhánh hoặc tạm dừng nhận đơn khi quá tải.
+- Món bán theo lịch cần thời gian đặt trước, ngày ngừng nhận và công suất theo khung giờ.
+
+### 5.2. Giá và snapshot đơn
+
+Giá và phụ thu được tính lại trên server khi xác nhận đơn. Mỗi dòng đơn lưu bản chụp tên, SKU, giá, biến thể, tùy chọn, thuế/phí áp dụng và phiên bản công thức tại thời điểm đặt. Sửa giá hoặc công thức trong danh mục không làm đổi đơn đã xác nhận.
+
+Combo giữ một dòng bán hàng nhưng tách được thành các món con để chia trạm và trừ kho. Không trừ tồn đồng thời cả combo và thành phần nếu combo không phải hàng đã đóng gói có tồn riêng.
+
+<a id="spec-06"></a>
+
+## 6. Module Menu & giá bán
+
+### 6.1. Vị trí và quyền
+
+- Module độc lập **Menu & giá bán** trong khu quản trị; không để lẫn trong cấu hình hệ thống chung.
+- Chủ/quản lý có quyền được cấp mới được thêm/sửa món, biến thể, công thức và giá bán.
+- Thu ngân chỉ xem menu đang bán và dùng giá hợp lệ để lên đơn; không tự sửa giá danh mục.
+- Thủ kho quản lý mã kho/giá nhập theo quyền kho; không được sửa giá bán hoặc chính sách khuyến mãi.
+
+### 6.2. Chức năng
+
+- Quản lý danh mục: bánh, nước, quà lưu niệm, combo và dịch vụ/phụ thu nếu có.
+- Thêm/sửa tên, mô tả, ảnh, trạng thái hiển thị, trạm xử lý và thứ tự trên menu.
+- Biến thể: size, nóng/lạnh, màu/mẫu, số lượng phần; mỗi biến thể có SKU, giá và định mức riêng khi cần.
+- Tùy chọn/topping có phụ thu và lượng nguyên liệu bổ sung. Đường/đá thay đổi định mức nếu công thức quy định.
+- Giá áp dụng toàn hệ thống hoặc theo chi nhánh/kênh; có thời gian bắt đầu/kết thúc.
+- Có bản nháp → xem trước → phát hành; ghi người thay đổi, giá cũ/mới, lý do và thời gian hiệu lực.
+- Không cho hai quy tắc giá cùng mức ưu tiên hiệu lực chồng nhau cho cùng biến thể/chi nhánh/kênh.
+- Giá niêm yết và ưu đãi là hai lớp khác nhau; không sửa giá gốc chỉ để chạy chương trình giảm tạm thời.
+- Món đang có trong đơn cũ được lưu snapshot; ngừng bán/sửa món không xóa lịch sử đơn.
+- Sản phẩm mới chỉ được mở bán khi có giá, chi nhánh, trạm xử lý và liên kết kho/định mức hợp lệ, hoặc được đánh dấu rõ là dịch vụ không trừ kho theo quyền quản lý.
+
+### 6.3. Trường trên màn hình quản lý sản phẩm
+
+Mã món/SKU · Tên · Nhóm · Biến thể · Giá bán · Cost dự kiến · Lãi gộp dự kiến · Chi nhánh · Trạm · Tồn khả dụng · Trạng thái · Phiên bản giá/định mức.
+
+Cột cost và lãi chỉ hiển thị cho tài khoản có quyền xem giá vốn, không hiển thị cho khách, pha chế hoặc thu ngân mặc định.
+
+<a id="spec-07"></a>
+
+## 7. Luồng khách đặt hàng và kiểm tra bắt buộc
+
+1. Chọn chi nhánh và hình thức nhận hàng.
+2. Chọn sản phẩm, biến thể, tùy chọn và số lượng.
+3. Hệ thống hiển thị tồn khả dụng và thời gian dự kiến của chi nhánh.
+4. Khách nhập thông tin liên hệ/địa chỉ hoặc chọn địa chỉ đã lưu.
+5. Chọn ưu đãi/voucher trong khối Ưu đãi của đơn hàng và quà đổi điểm; điểm thanh toán chỉ hiển thị nếu tính năng được bật.
+6. Server kiểm tra lại giá, tồn, vùng giao, giờ nhận, giới hạn ưu đãi và số dư điểm.
+7. Tạo đơn chờ xác nhận/thanh toán, giữ tồn và giữ ưu đãi/điểm liên quan trong thời hạn cấu hình.
+8. Đơn thanh toán trước chỉ chuyển chế biến sau khi xác nhận giao dịch hợp lệ; COD do thu ngân chấp nhận trước khi chuyển trạm.
+9. Khách theo dõi chuẩn bị → sẵn sàng → giao/nhận → hoàn tất.
+10. Khi đơn hoàn tất, hệ thống ghi điểm thưởng một lần và hiển thị chứng từ/biên nhận tương ứng.
+
+### 7.1. Kiểm tra bắt buộc
+
+- Không tạo đơn rỗng; số lượng là số nguyên dương và trong giới hạn bán.
+- Địa chỉ bắt buộc với giao hàng; kiểm tra vùng giao và phí trước khi xác nhận.
+- Giờ hẹn phải thuộc giờ phục vụ, đủ thời gian chuẩn bị và còn công suất.
+- Khách chưa đăng nhập theo dõi bằng liên kết/mã truy cập riêng khó đoán; không tra được đơn chỉ bằng số điện thoại hoặc mã đơn tuần tự.
+- Nhấn nhiều lần hoặc gửi lại cùng yêu cầu không tạo đơn/thu tiền/giữ điểm trùng.
+- Nếu hết món hoặc giá thay đổi trong lúc đặt, hiển thị phần thay đổi và yêu cầu khách xác nhận số tiền mới.
+
+Vị trí áp ưu đãi, bước in bill, cập nhật phiếu giao và điều kiện hoàn tất tuân theo các chương chuyên biệt phía dưới; không đóng đơn/cộng điểm chỉ vì khách đặt thành công.
+
+<a id="spec-08"></a>
+
+## 8. Vòng đời đơn, thanh toán, bill và các phiếu
+
+Các nhóm trạng thái phải tách riêng để không nhầm đã thu tiền, đã in, đã làm xong và đã giao.
+
+| Đối tượng | Trạng thái |
+| --- | --- |
+| Đơn hàng | Nháp → Chờ xác nhận → Đã xác nhận → Đang chuẩn bị → Sẵn sàng → Đang giao/Chờ nhận → Hoàn tất; nhánh Từ chối/Hủy |
+| Thanh toán | Chưa trả → Đang xử lý → Đã trả; nhánh Thất bại/Hết hạn; hoàn một phần/hoàn toàn phần qua giao dịch hoàn riêng |
+| Phiếu trạm | Chờ làm → Đã nhận → Đang làm → Sẵn sàng → Đã bàn giao; nhánh Báo sự cố/Hủy theo quyền |
+| Bill/in | Chưa chốt → Đã chốt; từng phiên bản có Chưa in/Đang gửi in/Chờ xác nhận/Đã in/In lỗi hoặc Hủy in |
+| Phiếu giao | Chờ chuẩn bị → Chờ bàn giao → Đã phân công → Đang giao → Giao thành công/Thất bại; giao lại có lần thử riêng |
+| Đối soát COD | Chưa thu từ khách → Đã thu từ khách → Chờ đối soát → Cửa hàng đã nhận/Đã đối soát; ngoại lệ thiếu/thừa |
+
+### 8.1. Điều kiện chuyển trạng thái
+
+- Thu ngân hoặc cơ chế tự nhận đơn đã cấu hình xác nhận đơn sau khi bảo đảm tồn và điều kiện thanh toán.
+- Trạm chỉ bắt đầu món thuộc đơn đã được phép chế biến.
+- Đơn chỉ “Sẵn sàng” khi mọi dòng còn hiệu lực của tất cả trạm đã sẵn sàng và hàng cần lấy đã được chuẩn bị.
+- Đơn tại quầy/nhận tiệm chỉ hoàn tất khi đã thanh toán, đã bàn giao và bản bill hiện hành đã được xác nhận in thành công hoặc có ngoại lệ quản lý được ghi nhận.
+- Đơn ship đã in/rời quầy chỉ hoàn tất xử lý tại quầy; đơn khách chỉ hoàn tất khi giao thành công và đủ tiền theo xác nhận hợp lệ. Theo dõi riêng việc shipper đã thu và cửa hàng đã đối soát nhận tiền; không tự đồng nhất hai trạng thái này.
+- Trường hợp cho phép công nợ hoặc hoàn tất khi chưa thu đủ tiền nằm ngoài bản đầu.
+- Hủy sau khi đã trả tiền không tự đánh dấu tiền đã hoàn. Phải có giao dịch hoàn và kết quả đối soát.
+- Không xóa đơn đã giao dịch; giữ trạng thái, người thao tác, thời gian và lý do.
+
+### 8.2. Ví dụ chia trạm
+
+Đơn gồm 2 Cannelé làm nóng + 1 Matcha ít đường + 1 ly lưu niệm:
+
+- Bếp nhận 2 Cannelé cùng yêu cầu làm nóng.
+- Pha chế nhận 1 Matcha với size, đường/đá và topping.
+- Thu ngân/đóng gói nhận nhiệm vụ lấy ly lưu niệm.
+- Thu ngân thấy tiến độ cả ba phần. Matcha làm xong trước không làm cả đơn thành “Sẵn sàng”.
+
+<a id="spec-09"></a>
+
+## 9. Quản lý đơn cho thu ngân / POS và ca làm việc
+
+### 9.1. Bán tại quầy
+
+- Tìm món nhanh theo tên/SKU/mã vạch; chọn biến thể, topping, combo, số lượng và ghi chú.
+- Chọn tại bàn/mang đi/nhận hẹn/giao hàng; hỗ trợ số bàn dạng thông tin trong bản đầu.
+- Tìm hoặc tạo thành viên bằng số điện thoại; xác minh thành viên trước khi sử dụng điểm/quà.
+- Lưu đơn nháp, mở lại đơn đang xử lý; đơn nháp chưa gửi không giữ tồn vô thời hạn.
+- Tính tạm tính, ưu đãi, điểm sử dụng, phí, thuế nếu cấu hình và số tiền cần thu.
+- Tiền mặt: nhập tiền khách đưa, tính tiền thối; khoản thu ghi nhận là số phải trả, không phải toàn bộ tiền khách đưa.
+- Chuyển khoản/ví/thẻ: ghi phương thức, mã tham chiếu và kết quả xác nhận.
+- Gửi đơn đến đúng trạm, in bill/phiếu bếp hoặc dùng màn hình số.
+- In lại có nhãn “Bản in lại” và nhật ký; không sinh giao dịch mới.
+
+### 9.2. Tiếp nhận đơn website
+
+- Hàng chờ riêng cho đơn được phân công: mới, chờ thanh toán, chờ xác nhận, đang làm, sẵn sàng và cần xử lý. Không trả danh sách đơn của thu ngân khác nếu thiếu quyền giám sát.
+- Xem đủ nội dung đơn mình phụ trách, tiến độ từng trạm, tiền, chi nhánh, thông tin khách cần thiết và lịch sử thao tác.
+- Chấp nhận/từ chối có lý do; báo thời gian dự kiến; xử lý yêu cầu thay món/hủy.
+- Kiểm đủ món và đóng gói trước khi bàn giao; đối chiếu mã nhận hàng hoặc thông tin được phép hiển thị.
+- Có luồng giao thất bại/khách không tới: quản lý quyết định hủy, hoàn tiền và xử lý hàng; không tự hoàn nguyên hàng đã hỏng.
+
+### 9.3. Sửa, hủy và hoàn tiền
+
+- Trước khi chuyển trạm: cho sửa theo quyền, tính lại giá, tồn và ưu đãi.
+- Sau khi chuyển trạm: tạo phiên bản điều chỉnh và phiếu thêm/bớt, thông báo trạm; không ghi đè dữ liệu chế biến cũ.
+- Sau khi thanh toán: tăng tiền cần giao dịch thu bổ sung; giảm tiền cần đề nghị hoàn theo phần chênh lệch.
+- Mặc định thu ngân đề nghị và quản lý duyệt giảm giá tay, hoàn tiền và hủy sau chế biến; chỉ thay mặc định khi có cấu hình hạn mức rõ ràng và audit.
+- Hoàn một phần phải xác định dòng món, số lượng, số tiền, phần giảm giá phân bổ và việc có nhận lại hàng hay không.
+- Mọi ngoại lệ cần lý do, người yêu cầu, người duyệt và thời gian. Nhân viên không tự duyệt yêu cầu của mình khi chính sách yêu cầu hai người.
+
+### 9.4. Ca thu ngân
+
+- Mở ca theo nhân viên, chi nhánh, quầy và tiền mặt đầu ca.
+- Ghi nhận khoản thu, hoàn tiền mặt và thu/chi ngoài bán hàng có lý do/quyền duyệt.
+- Cuối ca tính tiền kỳ vọng = đầu ca + thu tiền mặt − hoàn tiền mặt + thu khác − chi khác.
+- Nhập tiền kiểm đếm, chênh lệch và ghi chú; quản lý duyệt chênh lệch theo hạn mức.
+- Tách doanh số theo thời điểm bán và thu tiền theo thời điểm giao dịch; hoàn tiền ở ca sau thuộc ca thực hiện hoàn.
+- Ca đã khóa không được sửa trực tiếp; sửa sai bằng giao dịch điều chỉnh có nhật ký.
+- Tách bill, ghép bàn và chia nhiều phương thức trả cho một đơn để giai đoạn mở rộng, trừ khi cửa hàng xác nhận cần ngay.
+
+Phần Ưu đãi & voucher đặt sau danh sách món, trước tổng tiền. Chốt bill và gửi phiếu trạm không thay thế thao tác in/xác nhận in. Quy trình bill bắt buộc nằm ở chương kế tiếp.
+
+<a id="spec-10"></a>
+
+## 10. Quy trình chốt bill → in bill → hoàn tất
+
+### 10.1. Quy trình tại thu ngân
+
+```text
+Tạo/chọn đơn
+→ kiểm món, số lượng, khách, ưu đãi và tổng tiền
+→ CHỐT BILL
+→ hiển thị bản bill đã chốt
+→ IN BILL
+→ xác nhận in thành công
+→ HOÀN TẤT tại quầy khi đủ tiền và đã bàn giao
+```
+
+- **Chốt bill:** server kiểm tra đơn và tạo bản bill có mã, số phiên bản, chi nhánh, ca và người chốt. Đây chưa phải thao tác hoàn tất đơn.
+- **In bill:** in đúng bản đã chốt; lưu yêu cầu in, người in, máy in nếu có, thời gian và kết quả.
+- **Hoàn tất:** chỉ khả dụng khi bản bill hiện hành đã được xác nhận in thành công, đơn đủ điều kiện thanh toán và hàng đã bàn giao theo loại nhận.
+- Thanh toán có trạng thái độc lập. Có thể đã thu trước khi in hoặc thu tại bước bill, nhưng in bill không đồng nghĩa đã nhận tiền.
+- Không tự đóng đơn ngay khi bấm chốt bill hoặc đóng hộp thoại in.
+
+### 10.2. Xác nhận việc in và ngoại lệ
+
+- Nếu dùng máy in có tích hợp: lấy xác nhận từ dịch vụ/máy in khi khả dụng; phân biệt đã gửi lệnh với đã in.
+- Nếu chỉ in bằng hộp thoại trình duyệt: không thể xác minh giấy đã ra chỉ bằng việc hộp thoại đóng. Sau khi in, thu ngân phải bấm **Xác nhận đã in bill**.
+- Trạng thái in tối thiểu: Chưa in, Đang gửi in, Chờ xác nhận, Đã in, In lỗi/Hủy in.
+- In lỗi/hủy in giữ nguyên đơn, cho phép in lại và chưa cho hoàn tất theo luồng thông thường.
+- In lại không tạo bill hoặc giao dịch thu tiền mới; có số lần in và nhãn bản in lại.
+- Sửa nội dung/tổng tiền sau khi đã in tạo phiên bản bill mới; bản mới phải in lại trước khi hoàn tất. Bản cũ giữ trong lịch sử.
+- Trường hợp máy in hỏng cần xử lý khẩn: quản lý được xác nhận ngoại lệ có lý do, audit và đánh dấu chưa in; thu ngân không tự bỏ qua.
+
+### 10.3. Đơn ship: tách hoàn tất tại quầy và hoàn tất giao hàng
+
+- Sau khi in bill và kiểm đủ hàng, thu ngân bấm **Hoàn tất xử lý tại quầy / Chuyển giao hàng** để đưa phiếu giao sang bước bàn giao shipper.
+- Thao tác này không đánh dấu đơn khách là **Đã giao/Hoàn tất đơn**.
+- Đơn ship chỉ hoàn tất sau khi giao thành công và đủ tiền phải thu, kể cả COD. Khi đó mới ghi điểm thưởng.
+- Bill của đơn COD chưa thu phải ghi **Chưa thanh toán — COD**, không ghi đã thanh toán vì đã in.
+
+<a id="spec-11"></a>
+
+## 11. Module Hóa đơn — Bill trong ca
+
+### 11.1. Vị trí
+
+Menu nhân viên có module **Hóa đơn** riêng, tách khỏi màn hình tạo đơn và cấu hình hệ thống. “Hóa đơn” ở đây là bill/chứng từ bán hàng nội bộ; nếu tích hợp hóa đơn điện tử thì liên kết thêm mã và trạng thái chứng từ tương ứng.
+
+### 11.2. Phạm vi xem
+
+- Thu ngân mở module mặc định thấy **tất cả bill do tài khoản mình lập/phụ trách trong ca hiện tại**, gồm tại quầy, nhận tiệm và đơn website được giao xử lý.
+- Có bộ lọc các ca trước của chính tài khoản đó trong thời hạn được cấp.
+- Không mặc định xem bill/ca của thu ngân khác, kể cả cùng chi nhánh.
+- Quản lý được xem tổng hợp phạm vi cửa hàng được cấp quyền; việc xem chi tiết tài khoản khác phải có quyền giám sát riêng.
+- Hóa đơn không đổi người sở hữu hoặc chuyển ca chỉ vì một người khác in lại/xem hộ. Chuyển người xử lý phải có thao tác bàn giao được phép và giữ lịch sử người lập ban đầu.
+
+### 11.3. Danh sách và chi tiết
+
+- Danh sách gồm mã bill/đơn, thời gian, ca, khách, số món, tiền hàng, ưu đãi, tổng phải thu, đã thu, còn thu, phương thức, trạng thái đơn và trạng thái in.
+- Có tìm mã, lọc kênh bán/kiểu nhận/trạng thái thanh toán/in/hủy/hoàn và xuất dữ liệu theo quyền.
+- Tổng kết số bill bán hợp lệ, doanh thu bán, tiền thực thu, tiền hoàn và chờ thu; không cộng bill nháp/hủy vào doanh thu bán như bill hợp lệ.
+- Chi tiết lưu từng dòng món, phụ thu, ưu đãi, giao dịch, phiếu giao nếu có, lịch sử sửa và lịch sử in.
+- Thao tác: xem, in/in lại, mở đơn liên quan, mở phiếu giao và đề nghị hoàn/hủy theo quyền.
+- Bill đã phát sinh giao dịch không được xóa; sửa sai bằng phiên bản/điều chỉnh/hoàn có liên kết.
+- Bill thuộc ca bán ban đầu; tiền thu/hoàn phát sinh ở ca khác phải thuộc sổ tiền của ca thực hiện, không sửa ngược tổng thu tiền của ca đã khóa.
+
+<a id="spec-12"></a>
+
+## 12. Quản lý đơn cho pha chế và bếp
+
+### 12.1. Yêu cầu màn hình
+
+- Dạng bảng hàng chờ theo trạm: Chờ làm, Đang làm, Sẵn sàng và Sự cố.
+- Hiển thị mã đơn, thời điểm nhận, thời gian đã chờ, giờ hẹn, kênh bán, hình thức nhận và mức ưu tiên.
+- Dòng món hiển thị tên, size, số lượng, đường/đá/topping, ghi chú, cảnh báo dị ứng nếu có.
+- Đơn mới có tín hiệu hình ảnh và âm thanh tùy chọn. Có thao tác bật âm thanh và tắt tiếng.
+- Ưu tiên theo giờ cần bàn giao và thời gian chế biến; quản lý được đổi ưu tiên có ghi lý do.
+- Phân biệt món mang đi, giao hàng và phục vụ tại bàn; hiển thị số bàn khi áp dụng.
+
+### 12.2. Thao tác
+
+- Nhận phiếu; bắt đầu; xác nhận từng món/số lượng đã xong; hoàn tất phiếu trạm.
+- Báo hết nguyên liệu, lỗi máy, cần làm lại hoặc ghi chú chưa rõ; gửi cảnh báo về thu ngân/quản lý.
+- Theo dõi ai nhận phiếu, giờ bắt đầu và giờ hoàn thành để đo thời gian xử lý.
+- Làm lại tạo phiếu bổ sung, ghi lý do và hao hụt; không tự tạo thêm dòng thu tiền khách.
+- Không tự thay sản phẩm, bỏ món hoặc thay đổi giá. Thu ngân xử lý thay thế sau khi khách đồng ý.
+- Khi đơn sửa/hủy, trạm phải nhận thông báo rõ món bị đổi; phiếu đã bắt đầu không biến mất khỏi màn hình mà không có dấu vết.
+
+### 12.3. Đồng thời và mất kết nối
+
+- Hai thiết bị nhận cùng phiếu: chỉ một thao tác nhận thành công, thiết bị còn lại cập nhật người đã nhận.
+- Khi mất kết nối, hiển thị thời gian đồng bộ cuối và trạng thái ngoại tuyến; không báo cập nhật thành công khi server chưa xác nhận.
+- Kết nối lại phải tải lại các phiếu đang mở và các thay đổi bị bỏ lỡ, không tạo phiếu trùng.
+
+<a id="spec-13"></a>
+
+## 13. CRM giao hàng / Phiếu giao và theo dõi của khách
+
+### 13.1. Phạm vi
+
+- Module độc lập **CRM giao hàng / Phiếu giao**, chỉ dành cho đơn `Giao hàng`.
+- Đơn tại quầy, tại bàn và khách tự đến lấy không xuất hiện trong danh sách phiếu giao.
+- Phiếu giao liên kết đơn/bill, khách, địa chỉ, giao dịch và người phụ trách, không nhập lại toàn bộ đơn thành bản sao.
+- Một đơn có thể có nhiều lần giao lại; từng lần có mã/lịch sử riêng nhưng không tạo thêm doanh thu hoặc thu COD lần hai.
+
+### 13.2. Dữ liệu phiếu giao
+
+Mã phiếu · Mã đơn/bill · Chi nhánh · Khách/điện thoại nhận · Địa chỉ/ghi chú · Giờ hẹn · Số kiện/túi · Danh sách món · Người điều phối · Người/đơn vị giao · Phí giao khách trả · Phí trả đối tác nếu có · Tiền đã thu · Tiền COD còn phải thu · Trạng thái · Mốc thời gian · Bằng chứng giao nếu có.
+
+Thông tin địa chỉ và điện thoại chỉ người được phân công xử lý giao hàng/thu ngân có quyền cần thiết mới được xem.
+
+### 13.3. Luồng vận hành
+
+```text
+Đơn giao hàng được xác nhận
+→ tạo phiếu: Chờ chuẩn bị
+→ đủ món và in bill: Chờ bàn giao shipper
+→ phân công: Đã phân công
+→ xác nhận shipper nhận hàng: Đang giao
+→ Giao thành công hoặc Giao thất bại
+→ đối soát tiền còn phải thu
+→ Hoàn tất đơn
+```
+
+- Phiếu được tạo một lần theo đơn, có thể cập nhật lịch hẹn/người giao theo quyền.
+- Thu ngân xác nhận đủ món, số túi/kiện và bill trước khi bàn giao.
+- Phân công không đồng nghĩa shipper đã nhận hàng; phải có mốc nhận thực tế.
+- Lưu từng sự kiện: trạng thái trước/sau, người cập nhật, giờ, lý do và ghi chú.
+- Giao thất bại bắt buộc lý do; có hành động liên hệ lại, hẹn giao lại, chuyển trả hoặc đề nghị hủy/hoàn.
+- Giao lại là lần thử mới trong phiếu; không xóa lần thất bại cũ và không tự cộng lại phí nếu chưa xác nhận với khách.
+- Thu COD: phân biệt shipper đã thu từ khách và cửa hàng đã nhận tiền đối soát từ shipper. Giao thành công không tự xác nhận cửa hàng đã nhận tiền.
+- Điểm thưởng chỉ cấp theo điều kiện hoàn tất đơn; khoản đối soát tiền vận chuyển theo dõi riêng, không dùng thao tác “in bill” để hoàn thành cả quy trình.
+
+### 13.4. Giao diện điều phối
+
+- Các tab Chờ chuẩn bị, Chờ bàn giao, Đã phân công, Đang giao, Giao thành công, Giao thất bại và Chờ đối soát COD.
+- Bộ lọc ngày, khung giờ hẹn, trạng thái, người giao và phiếu được phân công cho tài khoản hiện tại.
+- Chi tiết phiếu có timeline, cuộc liên hệ/ghi chú nội bộ, lịch hẹn lại và lịch sử COD.
+- Cảnh báo đơn trễ giờ hẹn, đang giao quá lâu, thất bại chưa xử lý và tiền COD chưa đối soát.
+- Nếu chưa tích hợp đơn vị vận chuyển, nhân viên cập nhật thủ công có audit; hiển thị rõ nguồn cập nhật.
+
+### 13.5. Bổ sung giao diện khách hàng
+
+- Trong **Đơn hàng của tôi**, mỗi đơn ship có nút **Theo dõi giao hàng**.
+- Trang theo dõi hiển thị timeline dễ hiểu: Đã nhận đơn → Đang chuẩn bị → Chờ người giao nhận → Đang giao → Đã giao.
+- Hiển thị mã đơn/phiếu, giờ hẹn/dự kiến, thời điểm cập nhật cuối, phí giao, tình trạng tiền và số COD còn phải trả.
+- Khi giao thất bại/hẹn lại, khách thấy lý do được phép công khai, giờ hẹn mới và nút liên hệ cửa hàng.
+- Tách ghi chú nội bộ khỏi thông báo cho khách; không hiển thị số dư đối soát shipper, giá vốn, dữ liệu người khác hoặc ghi chú đánh giá nội bộ.
+- Chỉ hiển thị vị trí trực tiếp/bản đồ người giao khi thực sự có dữ liệu tích hợp và quyền sử dụng; bản đầu hỗ trợ timeline, không mô phỏng GPS thành dữ liệu thật.
+- Khách đăng nhập chỉ xem đơn của mình. Khách vãng lai dùng liên kết/mã theo dõi riêng được bảo vệ; không tra được đơn khác chỉ bằng mã đơn đoán được.
+
+<a id="spec-14"></a>
+
+## 14. Kho nguyên liệu, thành phẩm và vật tư
+
+### 14.1. Phân loại tồn
+
+| Loại | Ví dụ | Cách theo dõi |
+| --- | --- | --- |
+| Nguyên liệu | Matcha, cà phê, sữa, bơ, bột, đường, đá | Định lượng g/ml/đơn vị; lô và hạn dùng |
+| Thành phẩm | Cannelé, croissant, bánh kem đã làm | Chiếc/hộp; lô sản xuất và hạn dùng |
+| Hàng lưu niệm | Ly, sticker, pin, nam châm | SKU/biến thể và số lượng |
+| Bao bì | Ly giấy, nắp, seal, hộp, túi, ống hút, card visit, tem/thiệp | Định mức theo món và hình thức nhận |
+
+Đơn vị mua và đơn vị sử dụng có hệ số quy đổi, ví dụ 1 chai = 1.000 ml. Định lượng nguyên liệu dùng số thập phân cố định; tiền dùng số nguyên VND. Không dùng phép tính số thực không kiểm soát cho số dư kho/tiền.
+
+### 14.2. Chức năng kho
+
+- Danh mục nguyên liệu/hàng hóa, nhà cung cấp, đơn vị, mã hàng, ngưỡng tồn thấp và nơi lưu.
+- Phiếu nhập: nhà cung cấp, chi nhánh/kho, số lượng, giá vốn, lô, ngày sản xuất, hạn dùng và chứng từ.
+- Phiếu xuất: chế biến, sản xuất, hỏng/hết hạn, mẫu thử, sử dụng nội bộ hoặc điều chỉnh có lý do.
+- Sản xuất bánh theo mẻ: giữ và xuất nguyên liệu theo công thức, nhập số thành phẩm thực tế, ghi hao hụt; không xuất lại nguyên liệu đó khi bán thành phẩm.
+- Chuyển kho: yêu cầu → duyệt → xuất gửi → đang chuyển → nhận/nhận thiếu → hoàn tất. Hàng đang chuyển không được bán ở cả hai đầu.
+- Kiểm kê: chốt mốc, ghi số thực đếm, tính giao dịch phát sinh sau mốc và lập phiếu điều chỉnh chênh lệch có duyệt.
+- Giao dịch kho đã ghi sổ không sửa/xóa trực tiếp; hủy bằng bút toán đảo và phiếu thay thế.
+- Cảnh báo tồn thấp, lô gần hết hạn và lô hết hạn. Gợi ý xuất lô hết hạn sớm trước; không bán/xuất chế biến lô hết hạn.
+
+### 14.3. Công thức và tồn khả dụng
+
+- Công thức gồm biến thể sản phẩm, nguyên liệu, lượng dùng, bao bì và phiên bản hiệu lực.
+- Với nước pha chế, số phần bán được bị giới hạn bởi nguyên liệu bắt buộc có tồn khả dụng thấp nhất; có thể áp thêm hạn mức thủ công theo công suất trạm.
+- Với bánh đã sản xuất và quà lưu niệm, kiểm tra tồn thành phẩm/SKU.
+- Combo kiểm tra đủ mọi thành phần, tùy chọn và bao bì bắt buộc.
+- Tồn khả dụng = tồn thực tế được phép dùng − tồn đã giữ; loại trừ hàng cách ly, hết hạn và đang chuyển.
+- Không cho âm kho trong bản đầu. Ngoại lệ thiếu nguyên liệu phải xử lý có kiểm soát trước khi nhận đơn.
+
+### 14.4. Thời điểm giữ và trừ kho
+
+1. Khi tạo đơn chờ thanh toán/xác nhận: giữ lượng hàng/nguyên liệu cần thiết bằng giao dịch nguyên tử.
+2. Đơn chờ quá hạn: hủy và nhả phần giữ chưa tiêu thụ. Thời gian mặc định 15 phút, có thể cấu hình.
+3. Khi bắt đầu pha chế: chuyển lượng nguyên liệu tương ứng từ đã giữ sang đã tiêu thụ.
+4. Bánh thành phẩm/quà lưu niệm chuyển từ đã giữ sang đã xuất khi nhân viên lấy hàng/xác nhận chuẩn bị món đó; thao tác xuất chỉ ghi một lần.
+5. Hủy trước khi dùng/lấy hàng: nhả giữ; hủy sau chế biến: ghi hao hụt, không tự tăng lại nguyên liệu.
+6. Hàng trả chỉ nhập lại sau khi kiểm tra đủ điều kiện bán lại và được người có quyền duyệt.
+7. Thanh toán đến sau khi đơn hết hạn: đưa vào hàng chờ đối soát, kiểm tra lại tồn hoặc hoàn tiền; không tự phục hồi đơn và bán vượt tồn.
+
+Nguyên liệu, vật tư theo ly và vật tư chung đơn có thời điểm xuất riêng theo chương Cost. Bánh đã sản xuất chỉ xuất thành phẩm khi bán; không xuất lại nguyên liệu của mẻ. Cảnh báo dưới 100 áp dụng theo chương Cảnh báo tồn thấp.
+
+<a id="spec-15"></a>
+
+## 15. Định mức & Cost từng sản phẩm, từng ly
+
+### 15.1. Các lớp chi phí
+
+| Lớp | Ví dụ | Phạm vi tính |
+| --- | --- | --- |
+| Nguyên liệu món | Matcha, sữa, cà phê, đường, đá, topping | Theo từng biến thể/ly/phần |
+| Vật tư theo sản phẩm | Ly, nắp, seal, ống hút, thìa, hộp bánh | Theo từng ly/phần và hình thức phục vụ |
+| Vật tư theo đơn | Túi giấy, túi giao hàng, card visit, thiệp, tem đóng gói | Theo đơn hoặc theo nhóm số lượng, không tự nhân theo từng ly |
+| Thành phẩm/hàng mua sẵn | Bánh đã nhập kho, ly lưu niệm, sticker | Theo giá vốn thành phẩm/SKU; không xuất lại nguyên liệu đã dùng để sản xuất bánh |
+
+Mọi nguyên liệu/vật tư có tiêu hao đều phải có mã kho, đơn vị chuẩn, quy đổi đơn vị nhập, giá nhập và quy tắc định lượng. Đá tự sản xuất có thể nhập kho theo mẻ; đá mua ngoài nhập theo kg rồi quy đổi g, không bỏ cost/trừ kho chỉ vì không bán riêng.
+
+### 15.2. Định mức theo sản phẩm và hình thức phục vụ
+
+- Cấu hình định mức riêng cho từng món, size, topping và tùy chọn ảnh hưởng tiêu hao.
+- Tại chỗ có thể dùng ly thủy tinh tái sử dụng; không xuất ly thủy tinh thành hàng bán ở mỗi lượt phục vụ. Nếu quản lý dụng cụ bền, theo dõi riêng tài sản/dụng cụ và hỏng vỡ.
+- Mang đi dùng bộ ly/nắp/ống tương ứng; không xuất ống hút nếu khách chọn không lấy và chính sách định mức cho phép.
+- Đơn ship bổ sung túi/tem/card theo quy tắc đóng gói; đơn có nhiều ly có thể cần nhiều túi theo sức chứa.
+- Ly/túi/card tặng kèm vẫn có cost và trừ kho dù khách không trả riêng.
+- Bao bì phụ thu phải tách giá bán phụ thu với cost vật tư; thu 15.000đ phí hộp không có nghĩa cost hộp là 15.000đ.
+
+### 15.3. Công thức cost
+
+```text
+Cost trực tiếp một ly
+= Σ (lượng nguyên liệu × đơn giá vốn theo đơn vị chuẩn)
++ Σ (vật tư gắn riêng cho ly × đơn giá vốn)
+
+Cost đóng gói chung đơn
+= Σ (túi/card/tem/vật tư cấp đơn thực dùng × đơn giá vốn)
+
+Cost trực tiếp đơn
+= tổng cost món/thành phẩm/quà + cost đóng gói chung đơn
+
+Lãi gộp sản phẩm dự kiến
+= giá bán thuần sau phân bổ giảm giá − cost trực tiếp phân bổ
+```
+
+- Vật tư cấp đơn chỉ trừ kho một lần theo số lượng thực dùng. Nếu cần xem cost đủ trên từng ly, phân bổ chi phí chung theo số ly/phần hưởng vật tư; tổng phân bổ phải đúng chi phí chung của đơn.
+- Bản báo cáo phải phân biệt cost trực tiếp với lợi nhuận ròng. Lương, thuê mặt bằng, điện và phí thanh toán không tự coi là đã nằm trong cost nguyên liệu; chi phí bổ sung chỉ tính khi có cấu hình nguồn và cách phân bổ.
+- Thiếu giá vốn/định mức phải hiển thị **Chưa đủ dữ liệu cost**; không mặc định 0 rồi hiển thị lãi sai.
+
+### 15.4. Ví dụ một ly Matcha mang đi
+
+Giá dưới đây chỉ là dữ liệu minh họa, không thay giá nhập/giá bán thực tế của cửa hàng.
+
+| Thành phần | Lượng | Cost minh họa |
+| --- | --- | --- |
+| Matcha | 4 g | 4.000đ |
+| Sữa | 150 ml | 4.500đ |
+| Đường/siro | 20 ml | 500đ |
+| Đá | 180 g | 300đ |
+| Ly | 1 cái | 1.000đ |
+| Nắp | 1 cái | 300đ |
+| Ống hút | 1 cái | 200đ |
+| Tổng cost trực tiếp/ly | | **10.800đ** |
+
+Đơn 2 ly dùng 1 túi giấy 2.000đ + 1 card visit 200đ: cost đơn = 2 × 10.800 + 2.200 = **23.800đ**. Nếu phân bổ đều, cost gồm đóng gói là **11.900đ/ly**. Kho chỉ xuất 1 túi và 1 card cho đơn đó.
+
+### 15.5. Giá vốn, snapshot và trừ kho
+
+- Cần tách giá vốn dự kiến lúc báo giá với giá vốn thực tế phát sinh khi xuất nguyên liệu/vật tư.
+- Phương án cho phần bổ sung: bình quân di động theo mã hàng/kho cho tính cost; lô vật lý xuất theo hạn dùng sớm trước. Phương pháp giá vốn phải được chốt khi duyệt phụ lục và không đổi ngược số lịch sử âm thầm.
+- Sau nhập kho, cập nhật giá vốn hiện tại để báo cost cho đơn mới; giữ cost đã ghi sổ của đơn cũ.
+- Mỗi dòng xuất lưu lượng, đơn vị, cost đơn vị, thành tiền, phiên bản công thức, dòng đơn và trạm/người xuất.
+- Nguyên liệu xuất khi bắt đầu làm món; ly/nắp/ống xuất khi sử dụng cho món; túi/card/tem xuất khi đóng gói đơn. Cùng một vật tư không xuất ở hai trạm.
+- Làm lại ghi thêm hao hụt/tiêu hao có lý do; không tăng giá phải thu khách tự động.
+- Hủy sau sử dụng không hoàn nguyên liệu/vật tư tự động. Vật tư chưa dùng được nhả giữ; hàng trả dùng lại được phải kiểm tra và duyệt nhập lại.
+
+<a id="spec-16"></a>
+
+## 16. Cảnh báo tồn dưới 100 và đề nghị nhập hàng
+
+### 16.1. Điều kiện
+
+- Mỗi mã kho tại mỗi kho có ngưỡng cảnh báo mặc định **100 đơn vị chuẩn**; cảnh báo khi số khả dụng **< 100**, không phải ≤ 100.
+- “Đơn vị” phải hiển thị rõ: cái, ly, túi, card, g, ml hoặc đơn vị quản lý đã quy đổi. Ví dụ 99 ly giấy và 99 ml sữa đều là dưới ngưỡng 100 của đơn vị tương ứng; không coi 1 thùng là 1 ly.
+- Cho phép quản lý/thủ kho được cấp quyền đặt ngưỡng phù hợp riêng cho nguyên liệu dùng g/ml và từng SKU. Ngưỡng và hệ số quy đổi có lịch sử thay đổi.
+- Tồn xét cảnh báo là tồn khả dụng của cả mã trong kho, sau loại hàng hết hạn/cách ly và phần đang giữ; không tạo một cảnh báo riêng cho từng lô nhỏ khi tổng mã vẫn đủ.
+
+### 16.2. Nơi nhận và nội dung
+
+- Thủ kho được phân công kho đó nhận ở chuông thông báo và bảng **Kho → Cần nhập hàng**.
+- Nội dung: mã/tên hàng, kho, tồn thực, đang giữ, khả dụng, đơn vị, ngưỡng, thời gian và nút **Tạo đề nghị nhập**.
+- Ưu tiên theo mức thiếu; hết khả dụng là mức khẩn. Cảnh báo nhắc nhập, không tự tạo phiếu nhập đã ghi sổ.
+- Người nhận có thể đánh dấu đã xem, tiếp nhận xử lý và liên kết đề nghị nhập; chỉ hàng thực nhập/nhả giữ hợp lệ mới làm tăng số dư.
+
+### 16.3. Chống thông báo trùng
+
+- Tạo cảnh báo khi chuyển từ mức an toàn xuống dưới ngưỡng; một cảnh báo mở cho mỗi mã/kho.
+- Khi tồn tiếp tục giảm, cập nhật cảnh báo đang mở thay vì gửi thông báo mới ở mỗi lần bán.
+- Khi khả dụng trở lại ≥ ngưỡng, đóng cảnh báo; nếu giảm xuống lại, tạo đợt cảnh báo mới.
+- Kiểm tra ngay sau nghiệp vụ thay đổi tồn/giữ và có tác vụ rà soát định kỳ để tránh bỏ sót sự kiện.
+- Nếu kho chưa có thủ kho được phân công, đưa cảnh báo tới người quản lý kho được chỉ định; không phát cho toàn bộ tài khoản.
+
+<a id="spec-17"></a>
+
+## 17. Quản lý thành viên, hạng, tích điểm và đổi quà
+
+### 17.1. Hồ sơ và quản lý thành viên
+
+- Mã thành viên duy nhất, họ tên, số điện thoại chuẩn hóa duy nhất, ngày sinh nếu khách cung cấp, email tùy chọn, địa chỉ, ngày tham gia và trạng thái.
+- Đăng nhập/xác minh số điện thoại bằng OTP hoặc phương thức xác thực được duyệt.
+- Khách có thể mua không cần thành viên; việc gắn điểm vào tài khoản cần xác minh quyền sở hữu phù hợp.
+- Thu ngân tra cứu nhanh theo số điện thoại hoặc mã thẻ; giới hạn thông tin cá nhân hiển thị theo vai trò.
+- Quản lý được cấp quyền thành viên mới xem lịch sử đơn, điểm, hạng và đổi quà trong phạm vi được giao; khóa/mở tài khoản có lý do.
+- Hợp nhất tài khoản trùng do người có quyền thực hiện sau khi xác minh; giữ liên kết lịch sử và chống chuyển điểm hai lần.
+- Chỉnh điểm thủ công bằng giao dịch cộng/trừ có lý do và phê duyệt; không ghi đè số dư.
+
+### 17.2. Điểm khả dụng và điểm xét hạng
+
+- **Điểm khả dụng:** số điểm còn để đổi quà hoặc dùng thanh toán nếu được bật.
+- **Điểm xét hạng:** điểm tích lũy hợp lệ trong kỳ xét hạng; đổi quà không làm giảm chỉ số này.
+- Mỗi phát sinh có sổ điểm gồm nguồn, đơn liên quan, loại giao dịch, số điểm, trạng thái và ngày hết hạn nếu áp dụng.
+- Hạng và tỷ lệ được chụp tại thời điểm chấp nhận đơn; đơn hoàn tất mới cộng điểm. Đơn đưa thành viên lên hạng mới vẫn dùng tỷ lệ đã chụp; hạng mới áp dụng cho đơn tiếp theo.
+- Không cộng điểm khi chỉ tạo đơn, nhận thanh toán hoặc đánh dấu trạm sẵn sàng.
+
+### 17.3. Chính sách khởi tạo
+
+| Hạng | Điểm xét hạng trong kỳ | Tỷ lệ quy đổi giá trị mua sang điểm |
+| --- | --- | --- |
+| Đồng | 0–199 | 5% |
+| Bạc | 200–499 | 8% |
+| Vàng | 500–999 | 10% |
+| Kim Cương | Từ 1.000 | 15% |
+
+- Quy đổi tham chiếu 1 điểm = 100đ nếu sau này bật điểm thanh toán; giá quà đổi điểm được cấu hình riêng. Bản đầu ưu tiên đổi quà, điểm thanh toán tắt.
+- Điểm thưởng = làm tròn xuống [(tiền hàng sau ưu đãi và sau điểm thanh toán) × tỷ lệ / 100]. Ví dụ tiền hàng hợp lệ 200.000đ, hạng Vàng 10% → 200 điểm.
+- Cơ sở tích điểm loại trừ phí giao, phụ phí đóng gói, tiền tip và phần thanh toán bằng điểm. Chính sách thuế trong cơ sở tính cần chốt cùng cách cấu hình giá.
+- Kỳ xét hạng 12 tháng tính từ ngày tham gia, các kỳ không chồng lấn. Quy tắc giữ/hạ hạng và hạn dùng điểm chưa có giá trị cụ thể nên chưa bật tác vụ tự động.
+- Dùng các mốc/tỷ lệ này làm chính sách khởi tạo theo phương án đã duyệt; triển khai bằng phiên bản chính sách, không lấy số dư/logic localStorage của demo làm dữ liệu thật.
+
+### 17.4. Đổi điểm, hoàn/hủy và chống cộng trùng
+
+- Khi khách chọn đổi điểm/quà, server giữ điểm trong thời hạn đơn; điểm đã giữ không được dùng ở đơn khác.
+- Xác nhận đơn ghi nhận trừ điểm một lần; hủy hợp lệ hoàn điểm bằng giao dịch đảo. Đơn hết hạn trước xác nhận nhả giữ điểm.
+- Đổi quà đồng thời kiểm tra tồn quà; quà phải có dòng đơn/phiếu đổi và được chuẩn bị/bàn giao như hàng thường.
+- Nếu dùng điểm thanh toán: tỷ lệ quy đổi, mức tối đa và việc kết hợp voucher phải được cấu hình. Đề xuất bản đầu ưu tiên đổi quà, chưa bật điểm thanh toán.
+- Hoàn tiền hoàn toàn thu hồi điểm đã thưởng; hoàn một phần thu hồi phần thưởng theo giá trị hợp lệ đã hoàn, sử dụng tỷ lệ gốc.
+- Điểm đã thưởng rồi bị chi tiêu không làm chặn hoàn tiền: ghi nhận nghĩa vụ điểm thiếu/điểm âm và bù bằng điểm kiếm được sau này; hiển thị rõ, không tự thu thêm tiền.
+- Hoàn lại điểm đã dùng/quà chưa nhận tùy phần đơn được hủy; không vừa hoàn tiền mặt vừa hoàn điểm cho cùng một phần giá trị.
+- Hoàn tiền ảnh hưởng điểm xét hạng theo kỳ gốc; lưu lịch sử điều chỉnh và ngày hiệu lực.
+- Cùng một sự kiện hoàn tất/hoàn tiền được gửi lại nhiều lần chỉ tạo một phát sinh điểm tương ứng.
+
+<a id="spec-18"></a>
+
+## 18. Module Ưu đãi
+
+- Quản lý chương trình: giảm theo món/nhóm/khung giờ, combo, ưu đãi hạng thành viên và quà tặng.
+- Trường: tên, loại, điều kiện, đối tượng, phạm vi, thời gian, mức giảm/quà, ngân sách, thứ tự ưu tiên, quy tắc cộng dồn và trạng thái.
+- Luồng Nháp → Kiểm tra/xem trước → Hoạt động → Tạm dừng/Kết thúc.
+- Có mô phỏng trên giỏ mẫu, lịch sử chỉnh sửa và kết quả số đơn/giá trị đã ưu đãi.
+
+<a id="spec-19"></a>
+
+## 19. Module Voucher và Ví voucher
+
+- Quản lý mã cụ thể và đợt phát hành mã: mã dùng chung hoặc mã riêng từng khách.
+- Trường: mã, quyền lợi, điều kiện, thành viên/nhóm khách, chi nhánh/kênh, hạn dùng, tổng lượt, lượt/khách, ngân sách và trạng thái.
+- Quản lý phát hành, gán vào ví khách, thu hồi mã chưa dùng theo quyền và lịch sử sử dụng/hoàn lượt.
+- Voucher có thể gắn chiến dịch ưu đãi hoặc có chính sách độc lập; quyền lợi không bị nhân đôi vì vừa gắn chiến dịch vừa nhập mã.
+- Báo cáo riêng số mã phát, giữ, dùng, hết hạn, hủy và giá trị giảm thực tế.
+
+<a id="spec-20"></a>
+
+## 20. Áp ưu đãi trên website/POS và cách tính tiền
+
+### 20.1. Trên giao diện khách hàng
+
+- Menu chính có trang **Ưu đãi** để giới thiệu chương trình đang chạy, điều kiện và sản phẩm áp dụng.
+- Tài khoản khách có **Ví voucher** gồm mã đang có, sắp hết hạn, đã dùng và hết hạn.
+- Tại giỏ hàng/thanh toán, đặt khối **Ưu đãi của đơn hàng** ngay trên bảng tổng tiền và nút xác nhận.
+- Khối này gồm ưu đãi tự động đang áp dụng; ô nhập mã; nút **Chọn voucher**; quyền lợi thành viên; chi tiết số tiền/quà được hưởng.
+- Danh sách voucher phân biệt **Dùng được** và **Chưa đủ điều kiện**, kèm lý do như thiếu giá trị mua, sai nhóm hàng, sai chi nhánh hoặc hết lượt.
+- Bấm chọn voucher cập nhật ngay giá tạm tính, giảm từng phần, phí giao, quà tặng, tổng phải trả và điểm dự kiến.
+- Khách có thể bỏ/đổi mã trước khi xác nhận. Không chỉ sao chép mã mà thiếu nơi áp dụng.
+- Đơn đã đặt và bill hiển thị tên chương trình, mã đã dùng, giá trị giảm và quà tặng thực tế.
+
+### 20.2. Trên màn hình thu ngân
+
+Trong panel đơn hiện tại có khối **Ưu đãi & voucher**, đặt sau danh sách món và trước tổng thanh toán:
+
+1. Nhận diện khách/thành viên nếu có.
+2. Xem chương trình tự động đủ điều kiện.
+3. Nhập hoặc chọn voucher của khách.
+4. Xem số tiền được giảm, quà tặng và tổng phải thu.
+5. Xác nhận ưu đãi trước khi chốt bill.
+
+Thu ngân chỉ áp chương trình đang hoạt động và đúng điều kiện. Giảm giá tay là quyền riêng, cần quản lý duyệt theo chính sách; không được dùng ô voucher để nhập giảm tùy ý.
+
+### 20.3. Quy tắc nghiệp vụ
+
+- Server kiểm lại điều kiện theo khách, chi nhánh, kênh, nhóm hàng, thời gian, tồn quà và lượt dùng khi chốt bill/đặt đơn.
+- Mặc định một voucher mỗi đơn. Ưu đãi tự động có được cộng dồn với voucher hay không phải khai báo rõ trong chương trình; không cộng dồn ngầm.
+- Khi nhiều ưu đãi tự động xung đột, áp quy tắc ưu tiên đã cấu hình và giải thích kết quả trên tổng tiền. Voucher do khách chọn không bị âm thầm thay bằng mã khác.
+- Thay số lượng/món/chi nhánh/thành viên phải tính lại. Mã mất điều kiện được gỡ khỏi số tiền giảm và hiển thị lý do.
+- Quà tặng là dòng hàng giá 0, có định mức/giá vốn và giữ/trừ kho; thiếu quà phải báo rõ, không tự chuyển thành tiền giảm.
+- Phần giảm phân bổ xuống dòng hàng để hoàn một phần tính đúng. Không tự giữ nguyên toàn bộ ưu đãi nếu phần hàng còn lại không đáp ứng chính sách hoàn/hủy đã cấu hình.
+- Bill đã chốt không bị tính lại theo chương trình mới thay đổi; lưu phiên bản chính sách và kết quả áp dụng.
+
+### 20.4. Thứ tự tính
+
+1. Tạm tính các dòng = (giá biến thể + phụ thu) × số lượng.
+2. Áp giá combo và giảm từng dòng theo chính sách, tránh giảm trùng không được phép.
+3. Kiểm tra và phân bổ voucher đơn vào các dòng hợp lệ, xử lý phần làm tròn để tổng phân bổ đúng mức giảm.
+4. Trừ giá trị điểm thanh toán nếu tính năng được bật; không tính dòng quà miễn phí thành tiền khách trả.
+5. Cộng phí giao, đóng gói và các khoản thuế/phí được cấu hình; thuế đã nằm trong giá không cộng lần thứ hai.
+6. Tổng phải thu không âm. Số tiền thanh toán chỉ do server quyết định.
+
+Phí giao miễn giảm không tạo khoản giảm thêm vào tiền món. Giới hạn ưu đãi áp dụng nguyên tử để nhiều đơn đồng thời không vượt ngân sách/lượt.
+
+<a id="spec-21"></a>
+
+## 21. Thanh toán và đối soát
+
+- Hỗ trợ tiền mặt và các phương thức điện tử được chọn tích hợp; hiển thị phương thức theo chi nhánh và kênh bán.
+- Đơn online trả trước dùng kết quả server xác minh từ nhà cung cấp; không xác nhận thanh toán chỉ từ màn hình khách quay lại hoặc ảnh chụp chuyển khoản.
+- Có mã giao dịch, số tiền, trạng thái, thời gian và liên kết đơn; một đơn có thể có nhiều lần thử thanh toán nhưng tổng tiền ghi nhận không vượt nghĩa vụ thu mà không cảnh báo.
+- Xác thực thông báo thanh toán, đối chiếu số tiền/đơn, chống xử lý trùng và xử lý sự kiện đến sai thứ tự.
+- Chuyển khoản xác nhận thủ công, nếu bật, chỉ dành cho vai trò được cấp; ghi người xác nhận, thời gian, tham chiếu và lý do.
+- Hoàn tiền là giao dịch riêng có yêu cầu, phê duyệt, kết quả và trạng thái thất bại để xử lý lại.
+- Có hàng chờ tiền về thiếu/thừa, giao dịch không khớp đơn, tiền về sau hủy và hoàn tiền chưa thành công.
+- Đối soát tổng đơn, tổng thu, tổng hoàn và doanh thu thuần theo ngày/ca/phương thức. Thời gian báo cáo dùng Asia/Ho_Chi_Minh.
+
+<a id="spec-22"></a>
+
+## 22. Báo cáo kinh doanh và vận hành
+
+| Nhóm | Chỉ số |
+| --- | --- |
+| Kinh doanh | Doanh thu gộp/thuần, ưu đãi, hoàn tiền, số đơn, giá trị trung bình, sản phẩm và kênh bán |
+| Thu ngân | Thu theo phương thức, tiền kỳ vọng/thực đếm, chênh lệch, giảm giá tay, hủy và in lại |
+| Pha chế/bếp | Số phiếu, thời gian chờ/làm, đơn trễ, làm lại và nguyên nhân sự cố |
+| Kho | Tồn đầu/cuối, nhập/xuất, giữ hàng, hao hụt, hàng cận hạn, chuyển kho và chênh lệch kiểm kê |
+| Thành viên | Thành viên mới/quay lại, doanh số theo hạng, điểm cấp/đổi/hết hạn/thu hồi và giá trị nghĩa vụ điểm |
+| Quản trị | So sánh chi nhánh, thời điểm cao điểm, thay đổi cấu hình và ngoại lệ cần duyệt |
+
+Báo cáo phân biệt đơn hoàn tất, đơn đã thu nhưng chưa hoàn tất và đơn hủy/đang hoàn tiền. Có bộ lọc chi nhánh, kỳ, nhân viên và kênh; xuất CSV theo quyền. Báo cáo giá vốn/lợi nhuận chỉ bật khi phương pháp giá vốn và dữ liệu đầu vào đã được chốt.
+
+Bổ sung báo cáo bill đã chốt/đã in/chưa in và in lại; cost nguyên liệu/vật tư/lãi gộp theo quyền; phiếu giao trễ/thất bại/giao lại và COD chưa đối soát; hiệu quả Ưu đãi và Voucher riêng. Thu ngân chỉ xem bill/ca của mình, thủ kho chỉ xem báo cáo kho được giao; báo cáo tổng hợp cần quyền giám sát.
+
+<a id="spec-23"></a>
+
+## 23. Mô hình dữ liệu tối thiểu
+
+| Nhóm thực thể | Dữ liệu chính |
+| --- | --- |
+| Branch, Warehouse, Station | Chi nhánh, kho, quầy/trạm, lịch và vùng phục vụ |
+| User, Role, Permission, StaffAssignment | Tài khoản, quyền và phạm vi chi nhánh |
+| Member, Address, MemberTierHistory | Hồ sơ, địa chỉ và lịch sử hạng |
+| Product, Variant, Option, PriceRule | Danh mục, biến thể, phụ thu và giá theo phạm vi |
+| RecipeVersion, RecipeIngredient, ComboComponent | Công thức hiệu lực và thành phần combo |
+| InventoryItem, UnitConversion, StockLot | Mã tồn, quy đổi và lô/hạn dùng |
+| StockMovement, StockReservation, Stocktake | Sổ nhập/xuất, giữ tồn và kiểm kê |
+| ProductionBatch, StockTransfer | Mẻ sản xuất và chuyển kho |
+| Order, OrderLine, OrderRevision, OrderStatusEvent | Đơn, dòng snapshot, phiên bản sửa và lịch sử trạng thái |
+| PreparationTicket, PreparationTicketLine | Phiếu trạm, món con, số lượng và người xử lý |
+| PaymentAttempt, PaymentTransaction, Refund | Lần thử, giao dịch thu và hoàn |
+| Promotion, PromotionReservation, PromotionRedemption | Chương trình, giữ ngân sách/lượt và kết quả áp dụng |
+| Voucher, VoucherBatch, VoucherWallet, VoucherRedemption | Mã/đợt phát hành, ví khách và lịch sử dùng/hoàn lượt |
+| Invoice, InvoiceVersion, PrintJob, PrintConfirmation | Bill theo người lập/ca, phiên bản, lần in và xác nhận/ngoại lệ |
+| DeliveryNote, DeliveryAttempt, DeliveryEvent, DeliveryAssignment | Phiếu giao, lần giao, timeline công khai/nội bộ và người phụ trách |
+| CODCollection, DeliverySettlement | Tiền thu từ khách và khoản đối soát với người giao |
+| CostSnapshot, PackagingRule, OrderPackagingConsumption | Cost theo món/đơn, vật tư theo ly/cấp đơn và phân bổ không trùng |
+| StockAlert, ReplenishmentRequest | Cảnh báo theo mã/kho/ngưỡng và đề nghị nhập |
+| PointLedger, PointReservation, RewardRedemption | Sổ điểm, giữ điểm và quà đổi |
+| CashShift, CashMovement, AuditLog | Ca, thu/chi và nhật ký |
+
+Các bản ghi nghiệp vụ có ID ổn định, thời gian tạo/cập nhật, người thao tác, phạm vi chi nhánh, số phiên bản khi cần và mã liên kết sự kiện. Không lưu thông tin thẻ thanh toán đầy đủ trong hệ thống cửa hàng.
+
+Bổ sung owner_user_id/assigned_user_id và cash_shift_id cho bill/đơn theo nghiệp vụ; branch_id/warehouse_id/station_id cho phạm vi công việc. Việc đổi người phụ trách không xóa người lập gốc. Các quyền dữ liệu được kiểm tra cả với báo cáo, tìm kiếm, file xuất và sự kiện thời gian thực.
+
+<a id="spec-24"></a>
+
+## 24. Kiến trúc, bảo mật và yêu cầu chất lượng
+
+### 24.1. Kiến trúc đề xuất
+
+- Tái sử dụng frontend React/TypeScript hiện có; bổ sung các khu nhân viên theo quyền.
+- Backend cung cấp API cho sản phẩm/giá/cost, đơn/bill/in, phiếu trạm, CRM giao, tiền/đối soát, kho/cảnh báo, thành viên, ưu đãi/voucher và báo cáo.
+- Cơ sở dữ liệu quan hệ là nguồn dữ liệu chuẩn; giao dịch bảo vệ tồn, điểm, lượt voucher và thanh toán.
+- Kênh cập nhật thời gian thực cho POS và bảng trạm; có lấy lại trạng thái khi kết nối lại.
+- Tác vụ nền xử lý đơn hết hạn, cảnh báo kho, thông báo, đối soát và chính sách điểm đã được duyệt.
+- Sự kiện sau giao dịch được gửi lại an toàn, có định danh chống xử lý trùng; lỗi gửi thông báo không làm mất đơn đã ghi nhận.
+- Ảnh sản phẩm quản lý trong kho tài nguyên của hệ thống; các ảnh liên kết ngoài trong demo cần được rà soát trước khi vận hành.
+
+### 24.2. Yêu cầu chất lượng — mục tiêu nghiệm thu ban đầu
+
+- Responsive từ 360 px; POS/tablet tối thiểu 768 px, bảng trạm tối ưu màn hình ngang.
+- Giá, tồn và tổng tiền giữa website/POS/trạm thống nhất sau khi server xác nhận.
+- Mục tiêu cập nhật đơn mới/đổi trạng thái tới thiết bị liên quan trong 3 giây ở điều kiện kiểm thử bình thường; có kiểm thử tải theo số quầy/trạm thực tế đã chốt.
+- Các thao tác thông thường phản hồi dưới 2 giây ở phân vị 95 trong bộ tải nghiệm thu; tách thời gian chờ nhà cung cấp thanh toán.
+- Mọi quyền nhạy cảm kiểm tra trên server; giới hạn thử OTP/đăng nhập, phiên đăng nhập có hết hạn và thu hồi khi nghỉ việc.
+- HTTPS, lưu mật khẩu bằng hàm băm phù hợp nếu dùng mật khẩu; bí mật tích hợp chỉ ở server.
+- Nhật ký có actor, chi nhánh, đối tượng, trước/sau, lý do và mã yêu cầu; không ghi OTP, mật khẩu hay bí mật thanh toán vào log.
+- Sao lưu và diễn tập khôi phục trước vận hành. Chủ hệ thống duyệt mục tiêu mất dữ liệu tối đa/thời gian khôi phục; không mặc định dữ liệu trình duyệt là bản sao lưu.
+- Hiển thị lỗi dễ hiểu, giữ dữ liệu form khi lỗi, có hỗ trợ bàn phím và trạng thái mất kết nối rõ ràng.
+
+Các tài liệu kỹ thuật DATA_MODEL.md, API_CONTRACT.md, STAFF_SCREENS.md và BACKLOG.md được lập trước phụ lục nên cần đồng bộ các yêu cầu mới trước khi triển khai; khi khác nhau, dùng quy tắc nghiệp vụ trong bản hợp nhất này làm đầu vào sửa tài liệu kỹ thuật.
+
+<a id="spec-25"></a>
+
+## 25. Tiêu chí nghiệm thu hợp nhất — 38 tình huống
+
+| Mã | Tình huống | Kết quả cần đạt |
+| --- | --- | --- |
+| AC-01 | Một đơn có bánh, nước và quà lưu niệm | Chia đúng trạm; thu ngân thấy đủ tiến độ; đơn chỉ sẵn sàng khi đủ phần |
+| AC-02 | Hai khách mua SKU chỉ còn một sản phẩm | Chỉ một đơn giữ hàng thành công; đơn còn lại nhận thông báo hết hàng |
+| AC-03 | Hai đồ uống cùng dùng lượng sữa còn hạn chế | Giữ tồn nguyên liệu không vượt số lượng có thể dùng |
+| AC-04 | Combo bánh và nước giá 89.000đ | Thu đúng giá combo, tách đủ thành phần, không trừ kho hai lần |
+| AC-05 | Gửi lại yêu cầu tạo đơn hoặc thông báo thanh toán | Một đơn/một khoản thu/một lần cộng điểm tương ứng |
+| AC-06 | Đơn trả trước chưa có xác nhận hợp lệ | Không chuyển chế biến; có thể tiếp tục/đổi lần thử thanh toán theo trạng thái |
+| AC-07 | Đơn chờ hết hạn và tiền về muộn | Nhả giữ đúng; đưa khoản thu vào đối soát, không tự bán vượt tồn |
+| AC-08 | Hủy trước và sau khi bắt đầu pha chế | Trước: nhả giữ; sau: ghi tiêu hao/hao hụt, không hoàn nguyên liệu tự động |
+| AC-09 | Thay giá/công thức sau khi có đơn | Đơn cũ giữ snapshot; đơn mới dùng phiên bản hiệu lực |
+| AC-10 | Chỉ một trạm làm xong trong đơn nhiều trạm | Đơn vẫn đang chuẩn bị; thu ngân không thấy trạng thái sẵn sàng sai |
+| AC-11 | Hoàn tất đơn và gửi lại sự kiện hoàn tất | Chỉ cộng điểm một lần; không cộng khi đơn chỉ mới trả tiền |
+| AC-12 | Hai đơn cùng dùng số dư điểm/lượt voucher cuối | Không dùng vượt số dư/lượt; giao dịch thất bại được giải thích |
+| AC-13 | Đổi quà nhưng quà hết hàng | Không trừ điểm; không tạo phiếu bàn giao quà không có tồn |
+| AC-14 | Hoàn một phần sau khi đã đổi số điểm kiếm được | Hoàn tiền đúng phần phân bổ; tạo thu hồi điểm/điểm thiếu có lịch sử |
+| AC-15 | Chuyển kho, nhận thiếu và kiểm kê có giao dịch phát sinh | Tồn nguồn/đang chuyển/đích và chênh lệch được giải thích, không ghi tăng hai lần |
+| AC-16 | Nhân viên truy cập chi nhánh hoặc thao tác ngoài quyền | API từ chối và ghi nhận phù hợp; không rò rỉ dữ liệu |
+| AC-17 | Đóng ca có hoàn tiền và thu/chi ngoài bán | Tiền kỳ vọng, tiền thực đếm và chênh lệch đúng sổ giao dịch |
+| AC-18 | Mất mạng ở màn hình pha chế rồi kết nối lại | Có báo ngoại tuyến; tải lại phiếu chưa xong, không tạo bản sao |
+| AC-19 | Khách đoán mã đơn hoặc mở đơn của người khác | Không truy cập được dữ liệu đơn khi thiếu quyền/mã truy cập riêng |
+| AC-20 | Khôi phục dữ liệu từ bản sao lưu trong thử nghiệm | Đơn, tiền, tồn và sổ điểm đối chiếu được theo phạm vi phục hồi đã duyệt |
+
+### 25.1. Tiêu chí từ phụ lục
+
+| Mã | Tình huống | Kết quả bắt buộc |
+| --- | --- | --- |
+| BS-AC01 | Khách chọn voucher trong checkout | Có nơi chọn/nhập, điều kiện rõ, tổng tiền đổi đúng và bill lưu mã đã dùng |
+| BS-AC02 | Thu ngân thay món làm voucher không đủ điều kiện | Giảm giá được tính lại, có lý do, không giữ số tiền cũ |
+| BS-AC03 | Chốt bill nhưng chưa in hoặc hủy in | Không cho hoàn tất theo luồng thường; đơn vẫn còn và có thể in lại |
+| BS-AC04 | Đóng hộp thoại in trình duyệt | Chưa tự coi đã in; cần xác nhận nhân viên hoặc tín hiệu máy in phù hợp |
+| BS-AC05 | Sửa đơn sau khi in | Có phiên bản bill mới và bắt buộc in lại, không tạo giao dịch thu trùng |
+| BS-AC06 | Đổi giá bán/công thức | Đơn mới dùng giá/định mức mới, đơn cũ giữ snapshot; thu ngân/thủ kho không tự sửa giá |
+| BS-AC07 | Đơn 2 ly dùng 1 túi và 1 card | Cost phân bổ đúng; kho chỉ xuất 1 túi và 1 card, không nhân đôi theo số ly |
+| BS-AC08 | Chưa có giá nhập hoặc mã vật tư liên kết | Cảnh báo dữ liệu thiếu, không hiển thị cost 0 như đã đủ thông tin |
+| BS-AC09 | Xuất 1 ly theo size/topping/ít đá | Nguyên liệu và bộ vật tư đúng phiên bản định mức, không xuất hai lần ở hai trạm |
+| BS-AC10 | Đơn ship đã in bill và rời quầy | Phiếu sang bàn giao/đang giao, đơn khách chưa thành đã giao và chưa tự cộng điểm |
+| BS-AC11 | Giao thất bại rồi giao lại | Timeline giữ đủ hai lần; không tạo đơn/doanh thu/thu COD trùng |
+| BS-AC12 | Khách xem theo dõi giao hàng | Thấy trạng thái đơn mình, giờ cập nhật và COD còn trả; không thấy ghi chú nội bộ hoặc dữ liệu khách khác |
+| BS-AC13 | Thu ngân vào Hóa đơn | Thấy toàn bộ bill của mình trong ca; không truy cập bill thu ngân khác bằng đổi URL/xuất file |
+| BS-AC14 | Ly giấy còn 100 rồi giảm còn 99 | Tại 100 chưa cảnh báo dưới ngưỡng; tại 99 báo đúng thủ kho, không báo trùng mỗi lần bán |
+| BS-AC15 | Nhập thêm lên ≥100 rồi xuống lại <100 | Đóng cảnh báo cũ và mở đợt mới đúng kho/mã/đơn vị |
+| BS-AC16 | Thủ kho hoặc pha chế gọi trực tiếp API doanh thu/POS | Bị từ chối; không chỉ ẩn menu trên màn hình |
+| BS-AC17 | Mở menu quản trị đầy đủ | Ưu đãi và Voucher là hai module độc lập; Hệ thống không chứa hai trang này |
+| BS-AC18 | Tặng sản phẩm bằng ưu đãi | Dòng quà giá 0 vẫn có cost, giữ và xuất kho; không tự đổi quà thành tiền giảm |
+
+Giữ nguyên mã AC-01…AC-20 và BS-AC01…BS-AC18 để truy vết hai tài liệu nguồn. AC-16 dùng phạm vi quyền tài khoản mới; các kiểm thử hoàn tất đơn phải đồng thời thỏa bước in bill và điều kiện giao/thu tiền tương ứng.
+
+<a id="spec-26"></a>
+
+## 26. Lộ trình triển khai đã tích hợp phần bổ sung
+
+### 26.1. Giai đoạn 1 — Nền tảng vận hành tại một chi nhánh
+
+- Backend, dữ liệu tập trung, tài khoản nhân viên và phân quyền chi nhánh.
+- Danh mục bánh/nước/quà, biến thể, combo, công thức và kho cơ bản.
+- Website đặt đơn có khối áp ưu đãi và Ví voucher; POS thu ngân, bảng pha chế/bếp và cập nhật trạng thái.
+- Module Hóa đơn trong ca và luồng Chốt bill → In → Xác nhận in → Hoàn tất đúng loại nhận.
+- CRM phiếu giao dành riêng đơn ship, cập nhật thủ công có audit và timeline theo dõi của khách.
+- Menu/giá bán có phiên bản; định mức/cost theo ly và vật tư cấp đơn liên kết kho.
+- Cảnh báo khả dụng dưới 100 gửi đúng thủ kho, có chống trùng và đề nghị nhập.
+- Module Ưu đãi và Voucher riêng, không nằm trong Hệ thống; quyền module/tài khoản áp dụng từ đầu.
+- Tiền mặt và một phương thức điện tử đã chọn; đối soát, hoàn/hủy và nhật ký.
+- Thành viên cơ bản, sổ điểm, đổi quà và đảo điểm theo đơn.
+- Mở/đóng ca, báo cáo ngày và kiểm thử các tình huống tồn/tiền/điểm đồng thời.
+- Chạy thử với dữ liệu kiểm thử, sau đó chạy thí điểm có đối chiếu tại một chi nhánh.
+
+### 26.2. Giai đoạn 2 — Vận hành nhiều chi nhánh
+
+- Kho trung tâm, chuyển kho, sản xuất theo mẻ và kiểm kê đầy đủ.
+- Giá/menu theo chi nhánh, vùng giao, lịch/công suất đặt trước.
+- Phê duyệt theo hạn mức, báo cáo so sánh và cảnh báo vận hành.
+- Chính sách xét hạng/hết hạn điểm tự động sau khi được duyệt.
+
+### 26.3. Giai đoạn 3 — Mở rộng
+
+- Tích hợp tự động đối tác vận chuyển/bản đồ nếu chọn, kế toán/chứng từ và thiết bị chuyên dụng. Giao hàng thủ công và xác nhận in bằng trình duyệt đã có ở giai đoạn 1.
+- Tách/ghép đơn, chia phương thức thanh toán, quản lý bàn nâng cao nếu cần.
+- Chiến dịch chăm sóc thành viên, phân nhóm khách và dự báo nguyên liệu.
+- Ứng dụng/offline POS chỉ triển khai sau khi có thiết kế đồng bộ và đối soát riêng.
+
+Không đưa thanh toán thật vào sử dụng trước khi các phần đối soát, chống trùng, hoàn tiền, phân quyền và lưu vết liên quan đã nghiệm thu.
+
+Mọi tính năng mới được đưa vào tiêu chí kiểm thử tương ứng: không coi CRM ship, in trước hoàn tất, cost vật tư, hóa đơn trong ca và quyền riêng tài khoản là phần nằm ngoài giai đoạn 1.
+
+<a id="spec-27"></a>
+
+## 27. Mặc định triển khai và thông số còn cần cấu hình
+
+### 27.1. Mặc định
+
+| Hạng mục | Quy tắc thống nhất |
+| --- | --- |
+| Triển khai đầu | Một chi nhánh thí điểm, Hàm Nghi là dữ liệu mẫu; hỗ trợ phạm vi đa chi nhánh từ mô hình dữ liệu |
+| Trạm | Pha chế, bếp/bánh, lấy hàng/đóng gói |
+| Ngôn ngữ | Tiếng Việt |
+| Giữ tài nguyên | 15 phút cho đơn chờ chưa xác nhận; thời gian server |
+| Nhận đơn | COD cần thu ngân xác nhận; tự nhận đơn trả trước mặc định tắt |
+| Voucher | Tối đa một mã/đơn; cộng dồn ưu đãi tự động phải cấu hình rõ |
+| MERCH250 | Giữ phương án giảm 35.000đ theo demo; tặng sticker phải là chính sách quà riêng |
+| Phí mẫu | Giao 18.000đ, miễn từ 150.000đ hoặc nhận tiệm; hộp quà 15.000đ; dùng thực sau khi cấu hình vùng giao |
+| Tích điểm | Đồng/Bạc/Vàng/Kim Cương: 0/200/500/1.000, tỷ lệ 5/8/10/15%; làm tròn xuống; tách điểm khả dụng/xét hạng |
+| Dùng điểm | Đổi quà ở bản đầu; điểm thanh toán tắt; không tự chạy hết hạn/hạ hạng khi chưa có chính sách đầy đủ |
+| Bill | Phải in và xác nhận bản hiện hành trước hoàn tất thông thường; ngoại lệ chỉ quản lý duyệt có lưu vết |
+| Hóa đơn trong ca | Thu ngân xem bill/ca của mình; giám sát tài khoản khác cần quyền riêng |
+| Kho | Không âm kho; giữ/nhả/xuất theo công thức và vật tư từng cấp, không ghi trùng |
+| Tồn thấp | Mặc định <100 đơn vị chuẩn/mã/kho; được chỉnh riêng theo quyền |
+| Giá vốn | Phụ lục đề xuất bình quân di động theo mã/kho; xuất lô vật lý theo hạn dùng sớm trước; chốt cấu hình trước ghi sổ thật |
+| Phê duyệt | Mặc định quản lý duyệt hoàn tiền, giảm tay, hủy sau chế biến và chỉnh kho/điểm; không tự suy ra hạn mức tiền |
+| Kết nối | Online cho giao dịch; mô phỏng thanh toán/OTP chỉ trong môi trường thử |
+
+### 27.2. Thông số chưa được cung cấp cụ thể
+
+- Nhà cung cấp thanh toán/OTP, tài khoản thương mại và cấu hình kết nối.
+- Vùng giao, đối tác/người giao, cách thu và đối soát COD ngoài cửa hàng.
+- Máy in, khổ giấy, dịch vụ xác nhận in và máy quét mã.
+- Thuế/chứng từ, cấu hình giá vốn cho sổ thực, hạn dùng điểm và quy tắc giữ/hạ hạng cuối kỳ.
+- Ngưỡng riêng cho nguyên liệu g/ml nếu mặc định 100 không phù hợp, phân công thủ kho nhận cảnh báo.
+- Lưu lượng tải, hạ tầng, sao lưu, mục tiêu mất dữ liệu tối đa và thời gian phục hồi.
+
+Các mục này là dữ liệu cấu hình còn thiếu, không phải yêu cầu duyệt lại toàn bộ phương án đã chấp thuận. Có thể chuẩn bị adapter/giao diện trước; không bật hoặc báo tích hợp thành công khi chưa đủ cấu hình.

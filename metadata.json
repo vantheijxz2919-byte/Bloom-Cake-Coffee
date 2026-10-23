@@ -1,0 +1,6 @@
+{
+  "name": "Summer Cake & Cafe Đà Nẵng",
+  "description": "Tiệm bánh ngọt thủ công & cafe phong cách Gastro Pop độc đáo tại thành phố biển Đà Nẵng. Bơ Pháp Elle & Vire, Uji Matcha Kyoto, nướng mẻ mới mỗi ngày và giao hỏa tốc 30 phút.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
